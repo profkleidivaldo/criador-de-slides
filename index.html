@@ -904,20 +904,30 @@ function elPanel(p,el){
 
 /* ---------- salvar ---------- */
 function slug(t){return (t||'aula').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'aula';}
-function exportHTML(ava){
-  endEdit();const assets={};usedAssets().forEach(k=>{assets[k]=state.assets[k];});
+function buildFile(ava){
+  const assets={};usedAssets().forEach(k=>{assets[k]=state.assets[k];});
   const slides=ava?state.slides.map(s=>Object.assign({},s,{notes:''})):state.slides;
   const json=JSON.stringify({v:1,title:state.title,slides:slides,assets:assets}).replace(/</g,'\\u003c');
   let out=PRISTINE
     .replace(/(<script type="application\/json" id="deck-data">)[\s\S]*?(<\/script>)/,(m,a,b)=>a+json+b)
     .replace(/<title>[\s\S]*?<\/title>/,()=>'<title>'+esc(state.title)+'</title>');
   if(ava)out=out.replace('<script type="application/json" id="deck-data">',()=>'<script>window.__AVA_ONLY=true;<\/script><script type="application/json" id="deck-data">');
-  const blob=new Blob([out],{type:'text/html;charset=utf-8'}),a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);a.download=slug(state.title)+(ava?'-ava':'')+'.html';document.body.appendChild(a);a.click();
-  const name=a.download,size=blob.size;
+  return out;
+}
+function dl(name,text){
+  const blob=new Blob([text],{type:'text/html;charset=utf-8'}),a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();
   setTimeout(()=>{a.remove();URL.revokeObjectURL(a.href);},3000);
+  return blob.size;
+}
+function exportHTML(ava){
+  endEdit();const name=slug(state.title)+(ava?'-ava':'')+'.html',size=dl(name,buildFile(!!ava));
   if(!ava){unsaved=false;toast('Aula salva: '+name+' ('+fmtSize(size)+')');}
   return {name:name,size:size};
+}
+function iframeCode(){
+  const attr=buildFile(true).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+  return '<iframe title="'+esc(state.title)+'" style="width:100%;height:auto;aspect-ratio:16/9;border:0;border-radius:8px" width="100%" height="540" allow="fullscreen; autoplay; encrypted-media" allowfullscreen srcdoc="'+attr+'"></iframe>';
 }
 
 /* ---------- apresentação ---------- */
@@ -999,7 +1009,7 @@ function buildShell(){
 +'<button class="ib" id="bUndo" title="Desfazer (Ctrl+Z)">'+ic('undo')+'</button><button class="ib" id="bRedo" title="Refazer (Ctrl+Y)">'+ic('redo')+'</button>'
 +'<span class="fsize" id="fsize"></span>'
 +'<button class="btn play" id="bPlay">'+ic('play',18)+' Apresentar</button>'
-+'<button class="btn ghost" id="bAva" title="Salva a apresentação pronta para iframe (AVA), sem editor">'+ic('link',18)+' Salvar para AVA</button>'
++'<button class="btn ghost" id="bAva" title="Gera o código de iframe com a apresentação dentro, para colar no AVA">'+ic('link',18)+' Gerar iframe (AVA)</button>'
 +'<button class="btn save" id="bSave" title="Salvar (Ctrl+S)">'+ic('download',18)+' Salvar aula (.html)</button></header>'
 +'<nav class="ribbon">'
 +'<button class="rb" id="rTitle">'+ic('type',24)+'Título</button><button class="rb" id="rText">'+ic('text',24)+'Texto</button><div class="rsep"></div>'
@@ -1069,17 +1079,17 @@ function copyText(t){
   if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(()=>toast('Código copiado!'),fallback);else fallback();
 }
 function avaModal(){
-  const r=exportHTML(true);
-  const code='<iframe src="COLE_AQUI_O_LINK_DO_ARQUIVO" title="'+esc(state.title)+'" style="width:100%;aspect-ratio:16/9;border:0;border-radius:8px" allow="fullscreen; autoplay; encrypted-media" allowfullscreen loading="lazy"></iframe>';
+  endEdit();
+  const code=iframeCode(),name=slug(state.title)+'-iframe.html',size=dl(name,code);
   const b=h('div','',
-    '<p><b>✔ Arquivo para o AVA salvo:</b> '+esc(r.name)+' ('+fmtSize(r.size)+'). É só a apresentação, já adaptada para iframe: sem editor e sem as notas do professor.</p>'
-   +'<p><b>1.</b> Envie esse arquivo ao AVA (ou a qualquer hospedagem) e copie o <b>link direto</b> dele.</p>'
-   +'<p><b>2.</b> No editor do AVA, abra o modo <b>código-fonte</b> (botão &lt;/&gt;) e cole o código abaixo, trocando o link:</p>');
-  const ta=h('textarea','fld');ta.readOnly=true;ta.value=code;ta.rows=5;ta.style.cssText='font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px';ta.onfocus=()=>ta.select();b.appendChild(ta);
-  b.appendChild(h('p','','O aluno vê a aula direto em modo apresentação, ajustada ao tamanho do quadro, com toque, teclado e tela cheia (quando o AVA permite).'));
-  b.appendChild(h('p','','<b>Para editar depois</b>, use <b>Salvar aula (.html)</b>: aquele arquivo guarda a versão editável. O arquivo do AVA não abre no editor.'));
-  b.appendChild(h('p','','<b>Atenção:</b> o AVA precisa permitir iframe e JavaScript. Vídeos do YouTube/Vimeo precisam de internet; vídeos enviados ficam dentro do arquivo e podem passar do limite de upload do AVA.'));
-  modal('Aula pronta para o AVA',b,[{label:'Fechar'},{label:'Copiar código do iframe',pri:true,fn:()=>copyText(code)}]);
+    '<p><b>✔ Código do iframe salvo:</b> '+esc(name)+' ('+fmtSize(size)+'). A apresentação inteira (textos, imagens, vídeos e áudios) está <b>dentro do próprio iframe</b>, sem precisar hospedar outro arquivo. Não leva o editor nem as notas do professor.</p>'
+   +'<p><b>Como usar:</b> no editor do AVA, abra o modo <b>código-fonte</b> (botão &lt;/&gt;) e cole o conteúdo desse arquivo, ou clique em <b>Copiar código do iframe</b> e cole.</p>');
+  const ta=h('textarea','fld');ta.readOnly=true;ta.rows=4;ta.value=code.slice(0,320)+' …';ta.style.cssText='font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px';b.appendChild(ta);
+  b.appendChild(h('p','','O aluno vê a aula em modo apresentação, ajustada ao tamanho do quadro, com toque, teclado e tela cheia (quando o AVA permite).'));
+  if(size>1.5e6)b.appendChild(h('p','','<b>Atenção:</b> o código ficou grande ('+fmtSize(size)+'). Alguns editores do AVA limitam o tamanho do campo. Se não aceitar, reduza imagens/vídeos ou use o botão <b>Baixar arquivo da apresentação</b>, envie esse arquivo ao AVA e use <code>&lt;iframe src="LINK_DO_ARQUIVO" width="100%" height="540" allowfullscreen&gt;&lt;/iframe&gt;</code>.'));
+  else b.appendChild(h('p','','Se o editor do AVA recusar o código (alguns bloqueiam <code>srcdoc</code> ou scripts), use <b>Baixar arquivo da apresentação</b>, envie o arquivo ao AVA e aponte o iframe para o link dele.'));
+  b.appendChild(h('p','','<b>Para editar depois</b>, use <b>Salvar aula (.html)</b>, que guarda a versão editável.'));
+  modal('Iframe pronto para o AVA',b,[{label:'Fechar'},{label:'Baixar arquivo da apresentação',fn:()=>{const r=exportHTML(true);toast('Arquivo salvo: '+r.name+' ('+fmtSize(r.size)+')');}},{label:'Copiar código do iframe',pri:true,fn:()=>copyText(code)}]);
 }
 const loadDeck=e=>({title:e.title||'Aula',slides:e.slides,assets:e.assets||{}});
 function boot(){
