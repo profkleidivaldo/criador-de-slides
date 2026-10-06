@@ -208,6 +208,7 @@ textarea.fld{resize:vertical;min-height:80px}
 /* Cópia limpa deste arquivo, usada para gerar a aula salva */
 const PRISTINE='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
 const W=1280,H=720;
+const AVA_ONLY=!!window.__AVA_ONLY;
 const EMBED=(function(){try{return window.self!==window.top;}catch(e){return true;}})();
 const $=(s,r)=>(r||document).querySelector(s);
 const uid=()=>Math.random().toString(36).slice(2,9);
@@ -903,16 +904,20 @@ function elPanel(p,el){
 
 /* ---------- salvar ---------- */
 function slug(t){return (t||'aula').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'aula';}
-function exportHTML(){
+function exportHTML(ava){
   endEdit();const assets={};usedAssets().forEach(k=>{assets[k]=state.assets[k];});
-  const json=JSON.stringify({v:1,title:state.title,slides:state.slides,assets:assets}).replace(/</g,'\\u003c');
-  const out=PRISTINE
+  const slides=ava?state.slides.map(s=>Object.assign({},s,{notes:''})):state.slides;
+  const json=JSON.stringify({v:1,title:state.title,slides:slides,assets:assets}).replace(/</g,'\\u003c');
+  let out=PRISTINE
     .replace(/(<script type="application\/json" id="deck-data">)[\s\S]*?(<\/script>)/,(m,a,b)=>a+json+b)
     .replace(/<title>[\s\S]*?<\/title>/,()=>'<title>'+esc(state.title)+'</title>');
+  if(ava)out=out.replace('<script type="application/json" id="deck-data">',()=>'<script>window.__AVA_ONLY=true;<\/script><script type="application/json" id="deck-data">');
   const blob=new Blob([out],{type:'text/html;charset=utf-8'}),a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);a.download=slug(state.title)+'.html';document.body.appendChild(a);a.click();
+  a.href=URL.createObjectURL(blob);a.download=slug(state.title)+(ava?'-ava':'')+'.html';document.body.appendChild(a);a.click();
+  const name=a.download,size=blob.size;
   setTimeout(()=>{a.remove();URL.revokeObjectURL(a.href);},3000);
-  unsaved=false;toast('Aula salva: '+a.download+' ('+fmtSize(blob.size)+')');
+  if(!ava){unsaved=false;toast('Aula salva: '+name+' ('+fmtSize(size)+')');}
+  return {name:name,size:size};
 }
 
 /* ---------- apresentação ---------- */
@@ -921,7 +926,7 @@ const FSOK=()=>!!(document.fullscreenEnabled||document.webkitFullscreenEnabled);
 function openPlayer(start,standalone){
   endEdit();closePop();playerOpen=true;
   let i=clamp(start,0,state.slides.length-1),idle=null,ro=null,swiped=false;
-  const canFs=FSOK(),canEdit=standalone&&!EMBED;
+  const canFs=FSOK(),canEdit=standalone&&!EMBED&&!AVA_ONLY;
   const ov=h('div','player'+(EMBED?' emb':''));ov.tabIndex=-1;
   ov.innerHTML='<div class="pbar"><i></i></div><div class="pstage"></div>'
    +'<button class="pnav pl" aria-label="Slide anterior">'+ic('chevL',30)+'</button><button class="pnav pr" aria-label="Próximo slide">'+ic('chevR',30)+'</button>'
@@ -963,7 +968,7 @@ function openPlayer(start,standalone){
     else if(k==='ArrowLeft'||k==='PageUp'||k==='Backspace')prev();
     else if(k==='Home')show(0,-1);else if(k==='End')show(total-1,1);
     else if((k==='f'||k==='F')&&canFs)fs();
-    else if((k==='n'||k==='N')&&!EMBED)$('.pnotes',ov).classList.toggle('on');
+    else if((k==='n'||k==='N')&&!EMBED&&!AVA_ONLY)$('.pnotes',ov).classList.toggle('on');
     else if(k==='Escape'&&!standalone)close();
     else used=false;
     if(used){e.preventDefault();e.stopPropagation();}
@@ -994,7 +999,7 @@ function buildShell(){
 +'<button class="ib" id="bUndo" title="Desfazer (Ctrl+Z)">'+ic('undo')+'</button><button class="ib" id="bRedo" title="Refazer (Ctrl+Y)">'+ic('redo')+'</button>'
 +'<span class="fsize" id="fsize"></span>'
 +'<button class="btn play" id="bPlay">'+ic('play',18)+' Apresentar</button>'
-+'<button class="btn ghost" id="bAva" title="Como usar dentro do AVA (iframe)">'+ic('link',18)+' Usar no AVA</button>'
++'<button class="btn ghost" id="bAva" title="Salva a apresentação pronta para iframe (AVA), sem editor">'+ic('link',18)+' Salvar para AVA</button>'
 +'<button class="btn save" id="bSave" title="Salvar (Ctrl+S)">'+ic('download',18)+' Salvar aula (.html)</button></header>'
 +'<nav class="ribbon">'
 +'<button class="rb" id="rTitle">'+ic('type',24)+'Título</button><button class="rb" id="rText">'+ic('text',24)+'Texto</button><div class="rsep"></div>'
@@ -1016,7 +1021,7 @@ function buildShell(){
   $('#bAdd').onclick=templatesModal;
   $('#bUndo').onclick=undo;$('#bRedo').onclick=redo;
   $('#bPlay').onclick=()=>openPlayer(cur,false);
-  $('#bSave').onclick=exportHTML;$('#bAva').onclick=avaModal;
+  $('#bSave').onclick=()=>exportHTML(false);$('#bAva').onclick=avaModal;
   $('#deckTitle').oninput=e=>{state.title=e.target.value;unsaved=true;clearTimeout(tmr);tmr=setTimeout(autosave,600);};
   if(window.ResizeObserver)new ResizeObserver(fitStage).observe($('#canvas'));else addEventListener('resize',fitStage);
 
@@ -1064,21 +1069,23 @@ function copyText(t){
   if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(()=>toast('Código copiado!'),fallback);else fallback();
 }
 function avaModal(){
+  const r=exportHTML(true);
   const code='<iframe src="COLE_AQUI_O_LINK_DO_ARQUIVO" title="'+esc(state.title)+'" style="width:100%;aspect-ratio:16/9;border:0;border-radius:8px" allow="fullscreen; autoplay; encrypted-media" allowfullscreen loading="lazy"></iframe>';
   const b=h('div','',
-    '<p><b>1.</b> Clique em <b>Salvar aula (.html)</b>. Tudo (textos, imagens, vídeos e áudios) fica dentro de um único arquivo.</p>'
-   +'<p><b>2.</b> Envie esse arquivo para o AVA (ou para qualquer hospedagem) e copie o <b>link direto</b> dele.</p>'
-   +'<p><b>3.</b> No editor do AVA, abra o modo <b>código-fonte</b> (botão &lt;/&gt;) e cole o código abaixo, trocando o link:</p>');
+    '<p><b>✔ Arquivo para o AVA salvo:</b> '+esc(r.name)+' ('+fmtSize(r.size)+'). É só a apresentação, já adaptada para iframe: sem editor e sem as notas do professor.</p>'
+   +'<p><b>1.</b> Envie esse arquivo ao AVA (ou a qualquer hospedagem) e copie o <b>link direto</b> dele.</p>'
+   +'<p><b>2.</b> No editor do AVA, abra o modo <b>código-fonte</b> (botão &lt;/&gt;) e cole o código abaixo, trocando o link:</p>');
   const ta=h('textarea','fld');ta.readOnly=true;ta.value=code;ta.rows=5;ta.style.cssText='font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px';ta.onfocus=()=>ta.select();b.appendChild(ta);
-  b.appendChild(h('p','','Dentro do iframe a aula abre direto na apresentação, se ajusta ao tamanho do quadro, funciona com toque e teclado e <b>não mostra o botão de edição</b> ao aluno. Para editar de novo, abra o arquivo .html direto no navegador e clique em <b>Editar</b>.'));
-  b.appendChild(h('p','','<b>Atenção:</b> o AVA precisa permitir iframe e JavaScript. Vídeos do YouTube/Vimeo precisam de internet; vídeos enviados ficam dentro do arquivo e podem passar do limite de upload do AVA. Teste primeiro com uma aula pequena.'));
-  modal('Usar esta aula dentro do AVA',b,[{label:'Fechar'},{label:'Copiar código',pri:true,fn:()=>copyText(code)}]);
+  b.appendChild(h('p','','O aluno vê a aula direto em modo apresentação, ajustada ao tamanho do quadro, com toque, teclado e tela cheia (quando o AVA permite).'));
+  b.appendChild(h('p','','<b>Para editar depois</b>, use <b>Salvar aula (.html)</b>: aquele arquivo guarda a versão editável. O arquivo do AVA não abre no editor.'));
+  b.appendChild(h('p','','<b>Atenção:</b> o AVA precisa permitir iframe e JavaScript. Vídeos do YouTube/Vimeo precisam de internet; vídeos enviados ficam dentro do arquivo e podem passar do limite de upload do AVA.'));
+  modal('Aula pronta para o AVA',b,[{label:'Fechar'},{label:'Copiar código do iframe',pri:true,fn:()=>copyText(code)}]);
 }
 const loadDeck=e=>({title:e.title||'Aula',slides:e.slides,assets:e.assets||{}});
 function boot(){
   let emb=null;try{emb=JSON.parse($('#deck-data').textContent||'null');}catch(e){}
   const has=!!(emb&&emb.slides&&emb.slides.length);
-  if(has&&EMBED){
+  if(has&&(EMBED||AVA_ONLY)){
     /* dentro de iframe (AVA): somente a apresentação, sem editor */
     document.body.style.background='#0b0c1a';state=loadDeck(emb);document.title=state.title;openPlayer(0,true);return;
   }
